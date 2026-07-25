@@ -39,6 +39,10 @@ A hard stop on skipping questions: while on, the agent will not auto-decide or b
 
 Deploys a Google Apps Script web app with `clasp`, handling the traps that bite: deployment-ID hygiene (so you update the same deployment instead of spawning new ones), the `/exec` vs `/dev` URL distinction, and the auth failures that look like code bugs.
 
+### `/diagram` — a working board of your repo, not a picture of it
+
+Reads a repo through a lens you choose and writes an editable `.excalidraw` file plus a Mermaid source. The structure lens is the one to reach for: folders become nested frames, files become cards inside them, and you rearrange the board by hand — it ships a four-colour status legend to mark what is done, in progress, broken, or missing, and an empty workbench frame for gaps. Rerun it with `--update` and it *merges* into the board you arranged instead of overwriting it: your positions, colours, edited labels and hand-drawn notes survive, new units land in an Inbox, and units that left the codebase are tinted stale rather than deleted. Flowchart, ER, and sequence lenses are there too. It carries its own scanner and converter, so it needs nothing but Node.
+
 ## How these were built
 
 These skills were not designed in the abstract. They were extracted from a real, solo, AI-heavy development workflow whose single biggest pain was **context exhaustion** — an AI assistant losing the thread on a large project as it ran out of room to hold everything at once. Each skill maps to a specific, repeated instance of that pain:
@@ -47,6 +51,7 @@ These skills were not designed in the abstract. They were extracted from a real,
 - `/brief` and `/curious` tune how much the agent says and asks.
 - `/insist` stops the quiet auto-decision that a tired reviewer misses.
 - `/gas-deploy` encodes deploy knowledge you otherwise re-learn every few months.
+- `/diagram` moves the shape of a large repo out of the context window and onto a board you can keep.
 
 They were built the way daftplate builds everything: in small, independently reviewed phases, test-first, with zero runtime dependencies — the whole suite runs on Node's built-in test runner. They graduated into their own repo at daftplate's `v1.0.0`, once they had proven they carried no coupling to the templates. That lack of coupling is exactly why they are safe to drop into any repo you work in.
 
