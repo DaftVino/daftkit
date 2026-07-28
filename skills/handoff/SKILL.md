@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Write a session handoff before a planned /clear or at the end of a phase — branch, plan step, next actions, and the files-to-read manifest the next session needs. Use when the user says "handoff", "wrap up", "I'm going to clear", or when a phase is complete.
+description: Write a session handoff note — branch, plan step, next actions, and the files-to-read manifest the next session needs. Use when the user says "handoff", "wrap up", or when a phase is complete.
 allowed-tools:
   - Bash
   - Read

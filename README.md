@@ -21,7 +21,11 @@ A session-start brief. It reads the repo's `CLAUDE.md`, its code map, the latest
 
 ### `/handoff` — leave a clean exit
 
-The mirror of `/orient`. Before a planned context reset or at the end of a phase, it writes a durable handoff note into the plan document: the branch and what merged, what the plan got wrong and how it was corrected, what was discovered, what is still open, and the next step with its files-to-read list. `/orient` makes entry cheap; `/handoff` makes exit clean — together they are what long, multi-session work depends on.
+The mirror of `/orient`. At the end of a phase, it writes a durable handoff note into the plan document: the branch and what merged, what the plan got wrong and how it was corrected, what was discovered, what is still open, and the next step with its files-to-read list. `/orient` makes entry cheap; `/handoff` makes exit clean — together they are what long, multi-session work depends on. If you are also about to clear the context and want a prompt for the next chat, reach for `/continuum`, which writes the note through `/handoff` and the prompt itself.
+
+### `/continuum` — write the prompt the next session starts from
+
+`/handoff` writes the note that records where the work got to. `/continuum` writes the *prompt* that makes the next chat start correctly — the files to read with their sizes, the branch it must not get wrong, the constraints it must not revert, and the exit criteria it is done against. The part that makes it more than a template is a validator: `validate(promptText, context)` is pure, deterministic and dependency-free, and it **refuses an invalid prompt before it reaches disk**, over six fixed sections and fifteen rules. The rule that closes the real hole compares the branch the prompt names against the branch actually checked out, with no escape hatch — omitting where the work sits is how a fresh session silently branches from `main` and loses the plan. Use it when you are about to clear the context and want the next session to pick up without re-deriving anything.
 
 ### `/brief` — terse mode
 
