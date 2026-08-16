@@ -35,7 +35,7 @@ yourself about to read a large file "just quickly", that is the failure this
 skill exists to prevent.
 
 **When the hook says no file is large enough:** skip this section entirely and
-skip step 3 below. Do not grep defensively in a repo of small files — every
+skip step 4 below. Do not grep defensively in a repo of small files — every
 tool call re-sends the whole context, so three greps to avoid one 8KB read
 costs more than the read. The rule exists for 775KB userscripts, not for a
 5KB module.
@@ -43,9 +43,12 @@ costs more than the read. The rule exists for 775KB userscripts, not for a
 ## 1. Read, in this order, stopping when you have enough
 
 1. `CLAUDE.md` — always. It is under 60 lines by standard.
-2. `.daftplate.json`, if present — the profile and the daftplate version that
+2. `ROADMAP.md`, if present — read only the Now table. It is the repo's only
+   live state document on the evidence-ladder variant (repo-standards §6.6);
+   session handoffs go to issue comments, not standalone files.
+3. `.daftplate.json`, if present — the profile and the daftplate version that
    produced this repo. One line of output.
-3. `docs/code-map.md`, if present — read the `##` headers and the sizes, not
+4. `docs/code-map.md`, if present — read the `##` headers and the sizes, not
    the symbol lists. You are learning the shape, not the contents.
 
    **Check its freshness first**, with the command the map's own header prints:
@@ -65,12 +68,13 @@ costs more than the read. The rule exists for 775KB userscripts, not for a
    an indexed file, because a map cannot name the commit that adds it — a HEAD
    comparison reports every freshly-committed map as stale, and the correct
    response to that false positive is not to reason around it in the brief.
-4. The topmost released entry in `CHANGELOG.md` — `Read` with `limit: 40`.
-5. `git status --short` and `git log --oneline -5`.
-6. `gh issue list --limit 10 --state open` — skip without comment if `gh` is
+5. The topmost released entry in `CHANGELOG.md` — `Read` with `limit: 40`.
+6. `git status --short` and `git log --oneline -5`.
+7. `gh issue list --limit 10 --state open` — skip without comment if `gh` is
    unavailable or the repo has no remote.
-7. The newest file in `docs/designs/`, if any, and only its `## Handoff log`
-   section — `Grep` for the heading and read from there.
+8. The newest file in `docs/designs/`, if any, and only its `## Handoff log`
+   section — `Grep` for the heading and read from there. Skip `docs/archive/`
+   — superseded docs live there precisely so this step does not surface them.
 
 If `docs/code-map.md` is absent and the repo has a source file over 100KB, say
 so and offer `/code-map`. Do not generate it unasked.

@@ -4,7 +4,16 @@ All notable changes to daftkit are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
-## [1.2.0] — 2026-07-28
+## [1.3.0] — 2026-08-16
+
+### Added
+
+- **`/standards-change` — somewhere for a deliberate deviation to live that is not a comment nobody greps.** A note naming the rule you broke and why queues to `~/.daftplate/outbox/`, and `--flush` turns one note into an ADR or a private GitHub issue. Local rather than straight to GitHub, because a note names a repo and the standard it broke; an issue flush verifies the target is private before anything is searched or created. **Nothing is ever deleted** — a flush *moves* the note to `outbox/flushed/` byte-identical, and only after the ADR exists on disk or GitHub returned a URL, so a failed flush leaves the note pending. Every body carries an `Outbox-ID` and creation searches for it first, so a retry after a partial failure files the deviation once rather than twice. It imports `node:*` builtins only, which is a correctness requirement rather than a preference here: it runs from repos that have no daftplate checkout, so a shared-module import would have shipped a skill that throws the first time anyone used it.
+
+### Changed
+
+- **`/orient` reads `ROADMAP.md` before the code map.** On the evidence-ladder variant of the standards it is the repo's only live state document — session handoffs go to issue comments rather than standalone files — so a brief that skipped it was reporting on a repo whose current state it had not read. Only the Now table is read, keeping the step within the skill's own budget.
+- **`/handoff` follows it**, so a handoff and the orientation that consumes it name the same document.
 
 ### Added
 
