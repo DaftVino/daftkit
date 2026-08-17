@@ -23,7 +23,8 @@ never a stray note (repo-standards §6.4).
 
 If the work has no plan document because it did not need one, say so and write
 the state into the PR description instead. Do not create a design doc purely to
-hold a handoff.
+hold a handoff. On the Linear-board variant (repo-standards §6.5.1), write it as
+a comment on the working issue instead — Linear is where that repo's state lives.
 
 ## 2. Write the note
 
