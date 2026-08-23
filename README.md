@@ -1,4 +1,4 @@
-# daftkit
+<h1><img src="assets/daftkit-logo.png" alt="daftkit" width="200" align="top"> daftkit</h1>
 
 Portable agent skills for [Claude Code](https://claude.ai/code) — small, self-contained task playbooks you install once and use in any repository. No build step, no dependencies.
 
