@@ -75,7 +75,85 @@ reason it was left. This one is on you: the validator is not handed the git
 status, so it checks only that the section is non-empty. Stated here so the gap
 is known rather than assumed closed.
 
-## 4. Select what goes in the prompt
+## 4. Name what this session filed, if the board is Linear
+
+`repo-standards` §6.5.1 gives every issue 24 hours to be dressed in Linear —
+project, priority, blocking relations — and marks that clause as convention, so
+nothing prompts it and nothing checks it. Measured 2026-08-24: seven issues filed
+in one session reached Linear inside two minutes and arrived with no project and
+no priority. This step is the prompt that was missing. It is not a check, and it
+never blocks.
+
+**Detect the variant from `ROADMAP.md`, and from nowhere else.**
+
+```
+grep -n '^Board:' ROADMAP.md
+```
+
+`check-roadmap.mjs` fails any repo where more than one `Board:` line survives, so
+the one that does is that repo's single declaration of which §6.5 variant it is
+on. That is why this reads the roadmap rather than `CLAUDE.md` prose, which
+nothing constrains, or an ADR, which records the decision but not its current
+state.
+
+- The surviving line names **Linear** → continue.
+- It names **GitHub Projects**, or there is **no `ROADMAP.md`** → skip the whole
+  step in silence, the way §2 skips a repo with no code map. Most repos are on
+  the default variant, and a repo without a roadmap is either pre-template or on
+  an `optional` profile. Neither is a finding, so do not report that the step was
+  skipped.
+
+**List what this session filed:**
+
+```
+gh issue list --state all --search "created:>=<session-start> author:@me" \
+  --json number,title --limit 30
+```
+
+`<session-start>` is an ISO timestamp — `2026-08-25T12:00:00Z` — not a bare date.
+A bare date returns everything filed since midnight, so on the second session of
+one day it names issues the first session already dressed. `gh` missing,
+unauthenticated, or the repo has no remote → skip, silently, for the same reason
+a missing roadmap does.
+
+**An empty result prints nothing.** Not "none found". A session that filed no
+issues has no debt, and a line announcing that costs the next session a read to
+learn nothing.
+
+**Each issue goes into `## Unknowns and risks` by number and title, stating that
+dressing was not verified from here.** Use this wording, or wording that makes
+the same claim:
+
+- Filed this session; dressing not verified from here — `#168` *(title)*,
+  `#169` *(title)*. Confirm project, priority and blocking relations on the
+  board (§6.5.1).
+
+The distinction is the whole point of the step. This skill has no Linear access,
+so it cannot know whether an issue is already dressed, and a line reading *these
+need dressing* about an issue somebody dressed ten minutes ago is a false claim
+the next session will act on. What is true whatever the board says is that these
+issues were filed here and this skill could not check them.
+
+Two things follow from having no board access, and both are deliberate:
+
+- **It reports; it never dresses.** `allowed-tools` grants no MCP tool and gains
+  none. The call exists and works — that is not the constraint. The constraint is
+  distribution: this skill ships to repos with no Linear workspace, no such team,
+  and in most cases no Linear at all, and one workspace's server name has no
+  business in it. Anyone revisiting that is arguing about distribution, not about
+  whether the API can do it.
+- **`gh` gives the GitHub number and nothing else.** Under §6.5.1 an issue is
+  named `#N (TEAM-M)` wherever a human reads it, and the second identifier lives
+  on the board this skill cannot read. Write the number you have rather than
+  guessing the one you do not; the next session, which can reach the board, is
+  who completes it.
+
+Nothing found here changes which of §8's three terminal states is reached. An
+undressed issue is a fact about the board, not a defect in the prompt, and
+refusing to write a valid handoff over an empty board field would trade a real
+deliverable for a bookkeeping one.
+
+## 5. Select what goes in the prompt
 
 The validator polices structure. These criteria decide content, and they are
 criteria rather than an algorithm on purpose — a generator computing the manifest
@@ -114,11 +192,12 @@ Each uses a checkable verb: exists, contains, passes, committed, recorded.
 "Clean" and "robust" are not exit criteria.
 
 **`## Unknowns and risks`** — unresolved decisions, environmental uncertainty,
-likely regressions, uncommitted paths from §3, and anything needing the owner.
+likely regressions, uncommitted paths from §3, board issues from §4, and anything
+needing the owner.
 Plain prose, no required prefixes: a prefix makes a risk prefixed, not
 actionable.
 
-## 5. The shape it must take
+## 6. The shape it must take
 
 Six `##` headings, this order, nothing renamed:
 
@@ -144,7 +223,8 @@ Read nothing else until you have these, in order:
 
 ## Branch
 
-`<current branch>` — <what is on it>. <Where to branch from, and where not to.>
+`<the branch the next session will stand on>` — <what is on it>. <Where to
+branch from, and where not to.>
 
 ## Constraints
 
@@ -169,22 +249,78 @@ there is a real prompt that validates clean, worth reading before your first one
 It ships with that repo, not with this skill, so anywhere else the path holds
 whatever that repo happens to have — do not go looking.
 
-## 6. Validate before writing
+## 7. Validate before writing
 
 **An invalid prompt never reaches disk.** Assemble the context from real state —
-the validator makes no git call of its own:
+the validator makes no git call, no `gh` call and no file read of its own. Every
+fact it checks arrives from here, and a fact you do not gather is a rule that
+does not run:
 
 ```
 git branch --show-current
+git symbolic-ref --short refs/remotes/origin/HEAD | sed 's|^origin/||'
 git branch --format='%(refname:short)'
+gh issue list --state open --limit 200 --json number -q '.[].number'
 ```
+
+The second names the repo's default branch, which is where the next session
+starts on a normal handoff. Both are gathered because `branch` is chosen between
+them — see below — and neither is simply the answer.
+
+Then, for each path your `## Read first` manifest names, test whether it exists
+(`test -e <path>`, or a `Glob`) and collect the ones that do.
 
 Then call `validate(promptText, context)` from
 `<skill-dir>/scripts/validate-prompt.mjs`, passing
-`{ branch, head, branches, phaseContractPath }`. `branch` is `null` on a detached
-HEAD or an unborn branch; pass the short SHA as `head` and the prompt must name
-*that* instead. Neither case is refused — both are unusual enough that the next
-chat has to be told.
+`{ branch, head, branches, phaseContractPath, openIssues, existingPaths }`:
+
+| Key | From | Rule it arms |
+|---|---|---|
+| `branch` | the branch the next session will stand on — see below, **not** `git branch --show-current` | `branch-mismatch` |
+| `head` | `git rev-parse --short HEAD`, only when `branch` is empty | `branch-mismatch` on a detached HEAD |
+| `branches` | `git branch --format='%(refname:short)'` | `branch-unknown` |
+| `phaseContractPath` | the plan document this phase is executing | `manifest-contract-first` |
+| `openIssues` | the `gh issue list` above, as `number[]` | `issue-closed` |
+| `existingPaths` | the manifest paths that exist, as `string[]` | `manifest-missing` |
+
+**`branch` is the branch the prompt's *reader* will be standing on, not the one
+writing it.** Every other rule here is time-invariant: a manifest entry's size,
+a section's order, an issue's state are the same fact at write time and at read
+time. `branch-mismatch` is not. The launch pad is written from a feature branch
+and read by a fresh session after that branch has merged and been deleted, so
+validating it against `git branch --show-current` certifies a line that is true
+for one commit and false forever after. That is not a hypothetical: it is how
+the prompt on `main` rotted, and it is `#178`.
+
+So pick `branch` by asking where the next session will start:
+
+- **This branch is landing** — the normal handoff. Pass the repo's default
+  branch, usually `main`, and let `## Branch` name it and say what to cut from
+  it. Durable, because `main` is not deleted.
+- **The next session continues on this branch** — a mid-branch clear, nothing
+  merging yet. Pass the current branch. It still exists when the file is read,
+  so naming it is correct and stays correct.
+
+Nothing is weakened by this. A prompt naming a branch the repo does not have
+still fails `branch-unknown` from either standpoint, and a prompt naming no
+branch at all still fails `branch-unnamed`. What stops firing is only the
+refusal that was wrong — the writer's branch is not where the work will be.
+
+`branch` is `null` on a detached HEAD or an unborn branch; pass the short SHA as
+`head` and the prompt must name *that* instead. Neither case is refused — both
+are unusual enough that the next chat has to be told.
+
+**When `gh` is absent, unauthenticated, or rate-limited**, the command fails or
+prints nothing. Do not pass `[]` — an empty array means *every issue is closed*
+and refuses the prompt wholesale. Omit `openIssues` entirely, and **say so in
+chat**: "`issue-closed` stood down — `gh` could not list open issues, so no `#N`
+in this prompt was checked." A rule that turns itself off in silence is the
+defect this section exists to close, so the stand-down is a stated outcome and
+never an assumed one. `issue-unpaired` still runs: it reads the prompt's own text
+and needs no issue state.
+
+The same holds for `existingPaths`. Omit it if you could not test the paths, and
+say `manifest-missing` stood down.
 
 Every rule it can report, and what fixes it:
 
@@ -200,32 +336,48 @@ Every rule it can report, and what fixes it:
 | `manifest-overflow` | More than six entries; cut to the ones that bind |
 | `manifest-unsliced` | An entry over 32,768 bytes must say to read it in slices, or from anchors |
 | `manifest-unsized` | Add `(11.7K)`, or the literal `(new file)` |
+| `manifest-missing` | A `## Read first` path is not in `context.existingPaths`. An entry marked `(new file)` is exempt — it names something that does not exist yet, on purpose. Stands down entirely when `existingPaths` is absent |
 | `branch-unnamed` | Backtick the branch in `## Branch` |
-| `branch-mismatch` | Name the branch actually checked out. No escape hatch — naming where the work sits is never wrong |
+| `branch-mismatch` | Name the branch `context.branch` carries — for a launch pad that is where the *reader* will stand, not where you are writing from (§7). No escape hatch: the rule is right, and passing the writer's branch was the defect |
 | `branch-unknown` | A backticked ref in `## Branch` the repo does not have. Three causes: a real typo; a create line the vocabulary missed, so widen it, never weaken the rule; or a backticked filename or tag — `` `package.json` ``, `` `v1.2.0` `` — which the section reads as a branch. Unbacktick it, or move it out of `## Branch` |
+| `issue-closed` | A `#N` in the prompt is not in `context.openIssues`. `owner/repo#N` is exempt — another repo's number is not this repo's. Stands down entirely when `openIssues` is absent |
+| `issue-unpaired` | A `FORGE-M` written without its `#N` half. §6.5.1 names an issue `#N (FORGE-M)`, and the two sequences drift, so a Linear id alone can be checked against nothing. Write the pair. Never stands down — it reads the prompt's own text |
+| `issue-unqualified` | A `#N` wearing an unslashed prefix — `daftplate#152`, `post-#123`. §6.5.1 permits `#N` for this repo's issue and `owner/repo#N` for another's, and no third form; the third is ambiguous by construction, so it is checked against nothing and `issue-closed` goes quiet on it. Add the owner, or drop the prefix. Never stands down — the spelling is a property of the prompt's own text |
+| `closing-keyword` | A GitHub closing keyword standing next to a literal issue number — `Fixes` immediately followed by `#13`. GitHub's parser ignores code spans, block quotes and negation, so a prompt *warning* that such a footer would be wrong closes the issue the moment the prose is copied into a PR body; it has fired twice in this workspace, once on a deploy blocker. §6.5.1's sanctioned forms: break the token with an explicit `+` between the halves, or name the issue and describe the keyword in words. The one rule here that reads the raw text — a fence exempts nothing, because the parser's behaviour inside one is unmeasured and the copy does not carry the fence. Never stands down |
 | `exit-uncheckable` | `## Exit criteria` needs a command with an argument — `` `npm test` ``, not `` `make` `` — or a fenced block. A single token is a name, not something to run |
 | `unknowns-empty` | Type `- none` deliberately. An empty section is not a claim of safety |
 
 Or from a shell:
 
 ```
-node "<skill-dir>/scripts/validate-prompt.mjs" <prompt-path> --branch <name> --branches <a,b,c>
+node "<skill-dir>/scripts/validate-prompt.mjs" <prompt-path> --branch <name> --branches <a,b,c> --open-issues <n,n,n>
 ```
 
 Exit 0 clean, 1 on violations, 2 on a usage error. `--branch` is required —
 without it `branch-mismatch` would stand down and the wrong branch would print
-`clean`. Without `--branches` only `branch-unknown` stands down.
+`clean`. Spot-checking a committed launch pad takes the same value §7 chooses,
+which is usually `--branch main`; passing `$(git branch --show-current)` out of
+habit re-creates the false refusal this section exists to prevent.
 
-The shell path also passes no phase contract and no `head`, so
-`manifest-contract-first` never fires there and a detached HEAD goes uncompared.
-Both are reachable through `validate()` alone; the CLI takes no flag for either.
-Use it to spot-check a prompt, not to certify one.
+`--branches` and `--open-issues` stay optional, because the CLI must never shell
+out to `git` or `gh` itself and a caller may have neither answer. They are not
+silent about it: every run prints one `stood-down: <rule> — <why>` line to stderr
+per rule it could not arm, so a `clean` on stdout is always read next to the list
+of what was not checked. `--open-issues` takes the numbers from the `gh` command
+above; omit the flag rather than passing an empty value, which would refuse every
+`#N` in the prompt.
+
+`existingPaths` needs no flag — the CLI tests the manifest paths against the
+filesystem itself, which is the one boundary it is allowed. It passes no phase
+contract and no `head`, so `manifest-contract-first` never fires there and a
+detached HEAD goes uncompared. Both are reachable through `validate()` alone.
+Use the CLI to spot-check a prompt, not to certify one.
 
 **On failure, regenerate once**, feeding back the complete violation list. One
 repair, two drafts. A second repair masks a repeatable generation defect and
 spends a model call while the owner is waiting to clear.
 
-## 7. Three terminal states, and only three
+## 8. Three terminal states, and only three
 
 1. Still invalid after the one repair → **`CONTINUUM_BLOCKED_VALIDATION`**. Write
    nothing, commit nothing. Print every violation and the last candidate in chat
@@ -235,13 +387,14 @@ spends a model call while the owner is waiting to clear.
    **`CONTINUUM_UNCOMMITTED`**. Never retry, amend, reset, stash, switch branches
    or delete anything. The prompt is valid, on disk and already printed, so
    calling this blocked would misstate it — and calling it success would hide
-   that a `/clear` plus a branch switch loses the file.
+   that a `/clear` plus a branch switch loses the file. The file is a launch
+   pad, and the session that picks it up deletes it in its first commit.
 3. Committed → **`CONTINUUM_COMMITTED`**.
 
 Print the prompt verbatim either way it succeeds. The transition is meant to be
 a copy-paste, not a re-read.
 
-## 8. What the gate does not do
+## 9. What the gate does not do
 
 It checks structure and the facts it can compare against real state: six
 sections, a path with a size, a command, and the branch measured against git
@@ -250,4 +403,4 @@ rather than taken on trust.
 It does not rule on whether your constraints are the binding ones or your risks
 are the real ones. Those are judgements. A validator that certified them would be
 doing the thing `/crit` was built to stop — and a prompt that passes every rule
-can still be useless, which is why §4 is the part that actually takes thought.
+can still be useless, which is why §5 is the part that actually takes thought.

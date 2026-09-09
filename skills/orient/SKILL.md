@@ -57,12 +57,25 @@ costs more than the read. The rule exists for 775KB userscripts, not for a
    git log -1 --format=%h -- '*.js' '*.mjs' '*.cjs' '*.gs' '*.ts' '*.tsx' '*.jsx' '*.html'
    ```
 
-   If that differs from the commit the header names, indexed source has changed
-   since the map was built. Count the drift with `git rev-list --count
-   <map-commit>..HEAD -- '*.js' '*.mjs' '*.cjs' '*.gs' '*.ts' '*.tsx' '*.jsx'
-   '*.html'` and say so in the brief: *"code map is N source commits stale —
-   anchors may be wrong; run /code-map"*. A stale map is worse than no map,
-   because it is trusted. Do not regenerate it unasked.
+   If that differs from the commit the header names, indexed source **may** have
+   changed since the map was built. A stale map is worse than no map, because it
+   is trusted. Do not regenerate it unasked.
+
+   **A differing stamp is not proof, and in this repo it usually is not.** The map
+   is restamped in the same pull request as the source change that moved its
+   anchors, and a squash merge collapses both commits into one new SHA — so the
+   stamp is orphaned the moment that PR lands, with every anchor still correct.
+   Measured six times in three days, every one a false positive. Reporting those
+   as staleness trains the next session to ignore the signal.
+
+   So confirm before reporting it. Cheapest first — if the repo has a check that
+   regenerates the map and compares content (here,
+   `tests/code-map-freshness.test.mjs`), a green suite settles it and the stamp is
+   provenance. Otherwise `git merge-base --is-ancestor <map-commit> HEAD` tells
+   you whether the stamp is merely unreachable, and `git rev-list --count
+   <map-commit>..HEAD -- '*.js' '*.mjs' ...` counts real drift when it is not.
+   Only then say so in the brief: *"code map is N source commits stale — anchors
+   may be wrong; run /code-map"*.
 
    **Do not compare against `HEAD`.** The stamp is the last commit that touched
    an indexed file, because a map cannot name the commit that adds it — a HEAD
