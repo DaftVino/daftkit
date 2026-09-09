@@ -28,7 +28,7 @@
 // outside node:*, so it runs standalone from ~/.claude/skills/continuum/.
 //
 // Usage: node validate-prompt.mjs <prompt-path> --branch <name> [--branches <a,b,c>]
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 export const SECTIONS = ['Start here', 'Read first', 'Branch', 'Constraints', 'Exit criteria', 'Unknowns and risks'];
@@ -46,9 +46,14 @@ export const REFUSAL = {
   MANIFEST_OVERFLOW: 'manifest-overflow',
   MANIFEST_UNSLICED: 'manifest-unsliced',
   MANIFEST_UNSIZED: 'manifest-unsized',
+  MANIFEST_MISSING: 'manifest-missing',
   BRANCH_UNNAMED: 'branch-unnamed',
   BRANCH_MISMATCH: 'branch-mismatch',
   BRANCH_UNKNOWN: 'branch-unknown',
+  ISSUE_CLOSED: 'issue-closed',
+  ISSUE_UNPAIRED: 'issue-unpaired',
+  ISSUE_UNQUALIFIED: 'issue-unqualified',
+  CLOSING_KEYWORD: 'closing-keyword',
   EXIT_UNCHECKABLE: 'exit-uncheckable',
   UNKNOWNS_EMPTY: 'unknowns-empty',
 };
@@ -146,10 +151,15 @@ function readSections(text) {
   }
 
   const found = new Map();
+  // Every line a reserved section owns, its heading included. What is left over
+  // is the preamble above `## Start here` plus anything under a heading the
+  // contract does not reserve — text the per-section scan used to drop.
+  const claimed = masked.map(() => false);
   for (const [i, heading] of headings.entries()) {
     if (!SECTIONS.includes(heading.name)) continue;
     const end = i + 1 < headings.length ? headings[i + 1].line : masked.length;
     const range = { from: heading.line + 1, to: end };
+    for (let j = heading.line; j < end; j += 1) claimed[j] = true;
     const section = {
       ...heading,
       body: masked.slice(range.from, range.to),
@@ -159,7 +169,14 @@ function readSections(text) {
     if (found.has(heading.name)) found.get(heading.name).duplicates += 1;
     else found.set(heading.name, { ...section, duplicates: 0 });
   }
-  return { headings, found };
+  return {
+    headings,
+    found,
+    outside: masked.filter((_, i) => !claimed[i]),
+    // The unmasked twin, for the one rule that must not honour a fence. See
+    // `closingKeywordRefs`.
+    rawOutside: raw.filter((_, i) => !claimed[i]),
+  };
 }
 
 function readEntries(body) {
@@ -187,7 +204,7 @@ function readEntries(body) {
   });
 }
 
-function checkManifest(section, contractPath, out) {
+function checkManifest(section, contractPath, existingPaths, out) {
   const entries = readEntries(section.body);
   if (entries.length === 0) {
     out.push(violation(REFUSAL.MANIFEST_EMPTY, 'Read first', 'the manifest has no numbered entries; a bulleted read is prose'));
@@ -218,6 +235,13 @@ function checkManifest(section, contractPath, out) {
     if (!e.sized) out.push(violation(REFUSAL.MANIFEST_UNSIZED, 'Read first', `${which} carries no (size) and no (new file) escape`));
     else if (e.bytes !== null && e.bytes > SLICE_THRESHOLD_BYTES && !SLICED.test(e.text)) {
       out.push(violation(REFUSAL.MANIFEST_UNSLICED, 'Read first', `${which} is over ${SLICE_THRESHOLD_BYTES} bytes and says nothing about reading it in slices, or from anchors`));
+    }
+    // (new file) is the documented escape for an entry naming something that
+    // does not exist yet — `e.sized && e.bytes === null` identifies it
+    // precisely, since manifest-unsized already owns the unsized case above.
+    const isNewFile = e.sized && e.bytes === null;
+    if (existingPaths && e.path !== null && !isNewFile && !existingPaths.has(e.path)) {
+      out.push(violation(REFUSAL.MANIFEST_MISSING, 'Read first', `${which} does not exist`));
     }
   }
 }
@@ -292,19 +316,220 @@ function checkStructure(headings, found, out) {
   }
 }
 
+// The bucket a reference outside all six reserved sections is reported under.
+// `SECTIONS.indexOf` returns -1 for it, so validate()'s closing sort puts it
+// ahead of every sectioned violation — which is where the text it names sits.
+export const OUTSIDE_SECTION = '(outside)';
+
+// `#N` outside fenced blocks. The `(FORGE-M)` half of the §6.5.1 pairing is not
+// a GitHub number and must never be collected: the two sequences drift by 80-103
+// across this workspace, so a Linear number read as a GitHub one silently checks
+// the wrong issue's state.
+//
+// The lookbehind drops `owner/repo#N`, the form §6.5.1 mandates for another
+// repo's issue: checked against *this* repo's open list it is a false refusal on
+// a spelling the standard requires. `\w` covers `daftkit#3`, `-` and `/` cover
+// `some-repo#8` and `owner/repo#8`. A bare `#336699` is still read as issue
+// 336699, deliberately: it is all-digit with no discriminator from a real
+// number, and it fails loudly rather than silently.
+const ISSUE_REF = /(?<![\w/-])#(\d+)/g;
+
+// The lookbehind above exempts *any* `word#N`, not only the slashed form, and it
+// has to: told nothing about which repo it is validating for, the scan cannot
+// tell `daftkit#3` from `daftplate#152`. So the third spelling is refused rather
+// than guessed at — §6.5.1 permits `#N` for this repo's issue and
+// `owner/repo#N` for another's, and nothing else. An unslashed prefix is neither,
+// which is exactly why it is uncheckable: `daftplate#152` reads as a
+// self-reference and as `DaftVino/daftplate`'s issue 152 equally well, and those
+// are different issues in different repositories.
+//
+// Identity was the obvious alternative and does not work here. The working
+// checkout and the public export it produces have DIFFERENT names, so
+// name-matching would exempt `daftplate#152` — correctly, since that names the
+// real public export repo — and catch only the working repo's own spelling,
+// which nobody will ever type.
+// A list of *known other* repos goes stale by construction, and a stale list
+// falsely refuses the mandated spelling: the defect the lookbehind was added to
+// fix, reinstated. Requiring the slash needs no identity at all.
+//
+// It catches the English-prefix case for the same reason and to the same end:
+// `reproduces unchanged post-#123` names this repo's #123 and the lookbehind
+// drops it silently. Known false positive: text like `C#9` outside a fence.
+// The fix there is the space the prose wanted anyway.
+const UNQUALIFIED_REF = /(?<![\w/-])([A-Za-z][\w.-]*)#(\d+)/g;
+
+// A Linear id, and the pairing that redeems it. No lookbehind on the paired
+// form: `owner/repo#4 (FORGE-9)` is a legitimate pair even though its `#4` is
+// another repo's number.
+const LINEAR_REF = /\bFORGE-\d+\b/g;
+const PAIRED_REF = /#\d+\s*\(\s*(FORGE-\d+)\s*\)/g;
+
+export function issueRefs(text) {
+  const { masked } = maskFences(text);
+  const seen = new Set();
+  for (const line of masked) {
+    for (const m of line.matchAll(ISSUE_REF)) seen.add(Number(m[1]));
+  }
+  return [...seen].sort((a, b) => a - b);
+}
+
+// Linear ids written without their GitHub half. A prompt naming only `FORGE-246`
+// carries no `#N` at all, so issue-closed has nothing to compare and every stale
+// reference in it passes — the rule standing down without saying so. Resolving
+// the Linear id is not an option (the two sequences drift), and §6.5.1 already
+// requires the pair, so the bare form is refused rather than guessed at.
+// `word#N` — neither §6.5.1 spelling. Returned as the whole matched token, not
+// as a number: the prefix is the defect and the message has to quote it back, and
+// two different prefixes on the same number are two separate violations.
+export function unqualifiedRefs(text) {
+  const { masked } = maskFences(text);
+  const seen = new Set();
+  for (const line of masked) {
+    for (const m of line.matchAll(UNQUALIFIED_REF)) seen.add(m[0]);
+  }
+  return [...seen].sort();
+}
+
+// GitHub's auto-close keywords, all three tenses of each, exactly as its parser
+// takes them.
+//
+// What may stand between the keyword and the number is the whole rule. GitHub
+// accepts whitespace, an optional colon, and **any markdown emphasis or code
+// formatting around either half** — a keyword in a code span still closes, which
+// is the observed behaviour this rule exists for. So the joiner class holds
+// whitespace, `:` and the formatting characters, and holds **no `+`**. That
+// omission is not incidental: `+` is what §6.5.1's sanctioned form puts between
+// the two halves, and it is what makes the safe form safe here as well as on
+// GitHub.
+const CLOSING_KEYWORD_REF = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s`*_~]*(?:(?:[\w.-]+\/[\w.-]+)?#\d+|\bGH-\d+\b|https?:\/\/\S*?\/issues\/\d+)/gi;
+
+/**
+ * A closing keyword standing next to a literal issue number — the construct that
+ * closes an issue by being written about.
+ *
+ * **This is the one rule in this file that reads the raw text.** Every other one
+ * runs over `maskFences`' output, because a fenced block is an example rather than
+ * an assertion. That reasoning does not transfer, for two reasons and neither is a
+ * guess about the parser.
+ *
+ * GitHub's auto-close parser is **measured** to ignore code spans: this rule is
+ * built on a real incident, in which an issue was closed on 2026-08-29 by a PR
+ * body containing a backticked reference inside a block quote, in a sentence
+ * warning against exactly that. Its behaviour inside a *fenced* block was never
+ * measured, and measuring it costs a real issue to find out.
+ *
+ * And the pathway does not run through GitHub's renderer anyway. Both recorded
+ * occurrences — the earlier one recorded in a frozen design document, same
+ * shape — were
+ * launch-pad prose **copied into a PR body**, and a fence does not reliably
+ * survive that copy. Treating unmeasured as unsafe is the whole point of a rule
+ * whose violation is silent: there is no CI signal, no review comment and no diff,
+ * the issue simply stops being open.
+ *
+ * The whole matched token comes back rather than the number, because the joiner is
+ * the defect and the message has to quote it back — and the same number reached
+ * two different ways is two separate violations.
+ */
+export function closingKeywordRefs(text) {
+  const seen = new Set();
+  // By paragraph, not by line — the only rule here that does not scan line by
+  // line. A soft line break is whitespace once markdown is rendered, so a
+  // keyword ending one line and a `#N` opening the next are adjacent to the
+  // parser however they look in the source; a blank line is a paragraph break
+  // and does separate them. Line-by-line would miss the first, which is the
+  // shape a wrapped sentence produces by accident rather than by intent.
+  for (const paragraph of text.split(/\n\s*\n/)) {
+    for (const m of paragraph.matchAll(CLOSING_KEYWORD_REF)) seen.add(m[0].replace(/\s+/g, ' ').trim());
+  }
+  return [...seen].sort();
+}
+
+export function unpairedLinearRefs(text) {
+  const { masked } = maskFences(text);
+  const seen = new Set();
+  for (const line of masked) {
+    const paired = new Set();
+    for (const m of line.matchAll(PAIRED_REF)) paired.add(m.index + m[0].indexOf(m[1]));
+    for (const m of line.matchAll(LINEAR_REF)) if (!paired.has(m.index)) seen.add(m[0]);
+  }
+  return [...seen].sort();
+}
+
 export function validate(promptText, context) {
   if (typeof promptText !== 'string') throw new TypeError('promptText must be a string');
   const ctx = context && typeof context === 'object' ? context : {};
 
-  const { headings, found } = readSections(promptText);
+  const { headings, found, outside, rawOutside } = readSections(promptText);
   const violations = [];
   checkStructure(headings, found, violations);
 
   const manifest = found.get('Read first');
-  if (manifest) checkManifest(manifest, typeof ctx.phaseContractPath === 'string' ? ctx.phaseContractPath : '', violations);
+  if (manifest) {
+    checkManifest(
+      manifest,
+      typeof ctx.phaseContractPath === 'string' ? ctx.phaseContractPath : '',
+      Array.isArray(ctx.existingPaths) ? new Set(ctx.existingPaths) : null,
+      violations,
+    );
+  }
 
   const branch = found.get('Branch');
   if (branch) checkBranch(branch, ctx, violations);
+
+  // Every line of the prompt, not only the six sections. The launch pad's own
+  // `> Delete this file once #N is underway` note sits above `## Start here` by
+  // construction, and a per-section scan never read it. Sectioned references
+  // keep a real `section`, which the closing sort needs; the leftovers get
+  // OUTSIDE_SECTION, whose -1 index sorts them ahead of all six.
+  const regions = [
+    { section: OUTSIDE_SECTION, body: outside },
+    ...SECTIONS.map((name) => ({ section: name, body: found.get(name)?.body })),
+  ].filter((r) => r.body !== undefined).map((r) => ({ section: r.section, text: r.body.join('\n') }));
+
+  if (Array.isArray(ctx.openIssues)) {
+    const open = new Set(ctx.openIssues.map(Number));
+    for (const { section, text } of regions) {
+      for (const n of issueRefs(text)) {
+        if (!open.has(n)) {
+          violations.push(violation(REFUSAL.ISSUE_CLOSED, section,
+            `#${n} is not open; a prompt pointing at closed work sends the next session to re-do it`));
+        }
+      }
+    }
+  }
+
+  // No context key gates this one. The pairing is a property of the text, so
+  // there is nothing for a caller to supply and nothing to stand down.
+  for (const { section, text } of regions) {
+    for (const id of unpairedLinearRefs(text)) {
+      violations.push(violation(REFUSAL.ISSUE_UNPAIRED, section,
+        `${id} carries no #N half; §6.5.1 names an issue #N (FORGE-M), and a Linear id alone cannot be checked against GitHub issue state`));
+    }
+  }
+
+  // Nor this one, and for the same reason: the spelling is a property of the
+  // text. It runs whether or not `openIssues` was supplied, which is the point —
+  // the form it refuses is the one that made issue-closed go quiet.
+  for (const { section, text } of regions) {
+    for (const ref of unqualifiedRefs(text)) {
+      violations.push(violation(REFUSAL.ISSUE_UNQUALIFIED, section,
+        `${ref} is neither §6.5.1 spelling; write #${/\d+$/.exec(ref)[0]} for this repo's issue or owner/repo#${/\d+$/.exec(ref)[0]} for another's, because a prefixed #N is checked against nothing`));
+    }
+  }
+
+  // Nor this one — and over `rawBody`, so a fence exempts nothing. The regions
+  // above are built from the masked bodies on purpose and cannot be reused.
+  const rawRegions = [
+    { section: OUTSIDE_SECTION, body: rawOutside },
+    ...SECTIONS.map((name) => ({ section: name, body: found.get(name)?.rawBody })),
+  ].filter((r) => r.body !== undefined).map((r) => ({ section: r.section, text: r.body.join('\n') }));
+
+  for (const { section, text } of rawRegions) {
+    for (const ref of closingKeywordRefs(text)) {
+      violations.push(violation(REFUSAL.CLOSING_KEYWORD, section,
+        `${ref} is a closing keyword beside a literal issue number; GitHub's parser ignores code spans, quoting and negation, so this closes the issue when the prompt is copied into a PR body — §6.5.1: break the token with an explicit + between the halves, or name the issue and describe the keyword in words`));
+    }
+  }
 
   const exit = found.get('Exit criteria');
   if (exit && !exit.hasFence && !backticked(exit.body.join('\n')).some((s) => /\s/.test(s))) {
@@ -320,15 +545,16 @@ export function validate(promptText, context) {
   return { ok: violations.length === 0, violations };
 }
 
-const USAGE = 'usage: node validate-prompt.mjs <prompt-path> --branch <name> [--branches <a,b,c>]';
+const USAGE = 'usage: node validate-prompt.mjs <prompt-path> --branch <name> [--branches <a,b,c>] [--open-issues <1,2,3>]';
 
 function readArgv(argv) {
   const rest = argv.slice(2);
-  const opts = { path: null, branch: null, branches: [] };
+  const opts = { path: null, branch: null, branches: [], openIssues: null };
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
     if (arg === '--branch') opts.branch = rest[++i] ?? null;
     else if (arg === '--branches') opts.branches = (rest[++i] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    else if (arg === '--open-issues') opts.openIssues = (rest[++i] ?? '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0);
     else if (arg.startsWith('--')) return null;
     else if (opts.path === null) opts.path = arg;
     else return null;
@@ -357,7 +583,31 @@ function main(argv) {
     return 2;
   }
 
-  const result = validate(text, { branch: opts.branch, head: null, branches: opts.branches, phaseContractPath: '' });
+  // A rule that stood down is a rule that reported nothing, which reads exactly
+  // like a rule that passed. `--branch` was made required for that reason; the
+  // issue and contract context cannot be, because supplying them would mean
+  // calling `gh` and reading a plan, neither of which this file is allowed to
+  // do. So the CLI names what it turned off instead of printing a bare `clean`.
+  const stoodDown = [];
+  if (opts.openIssues === null) stoodDown.push(['issue-closed', 'no --open-issues, so no issue state to compare against']);
+  if (opts.branches.length === 0) stoodDown.push(['branch-unknown', 'no --branches, so no branch list to compare against']);
+  stoodDown.push(['manifest-contract-first', 'the shell path supplies no phase contract; reach it through validate()']);
+  for (const [rule, why] of stoodDown) console.error(`stood-down: ${rule} — ${why}`);
+
+  const { found } = readSections(text);
+  const manifest = found.get('Read first');
+  const existingPaths = manifest
+    ? readEntries(manifest.body).map((e) => e.path).filter((p) => p !== null && existsSync(p))
+    : [];
+
+  const result = validate(text, {
+    branch: opts.branch,
+    head: null,
+    branches: opts.branches,
+    phaseContractPath: '',
+    existingPaths,
+    openIssues: opts.openIssues,
+  });
   for (const v of result.violations) console.error(`${v.rule}: ${v.section} — ${v.message}`);
   console.log(result.ok ? 'clean' : `${result.violations.length} violation(s)`);
   return result.ok ? 0 : 1;

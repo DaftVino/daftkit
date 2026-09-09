@@ -10,6 +10,11 @@ An output-token saver as much as a style preference. `/brief` turns it on for
 the session; `/brief off` turns it off. Acknowledge the toggle in one line and
 nothing more.
 
+The **session default** is read from `~/.daftplate/brief` by the `SessionStart`
+hook, which names any toggle reading `on` in one line of its brief. `/daftplate`
+writes that file; this skill still only toggles the live session, and its
+`allowed-tools` stays `[]` — it gains no capability it did not have.
+
 ## While on
 
 - Lead with the result. The answer is the first thing on the screen.

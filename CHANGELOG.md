@@ -4,6 +4,18 @@ All notable changes to daftkit are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-09-08
+
+### Added
+
+- **`/anchor` — keeping the thread through a compaction, rather than handing it to a new session.** `/continuum` writes the prompt a *fresh* chat starts from; this keeps the current one. Given a subject, a desired outcome and a resume point, it produces an evidence-grounded continuation brief and a ready-to-submit `/compact` command, so an unfocused compaction cannot discard the task state still needed. It is **explicit-invocation only** — when to compact belongs to the user, and excluding it from discovery also keeps its description out of every session's context. Two refusals are deliberate: an argument missing any of the three parts gets one clarification question and nothing else, because defaulting an omitted scope to "the current task" preserves the wrong subject; and it prints the command rather than running it, since a skill cannot trigger a built-in — it must never claim a compaction occurred.
+- **`/audit` — whether a green suite proves anything.** It reads raw test bodies, names a concrete mutant per assertion, and reports which assertions would accept that mutant. A passing suite is evidence a test executed, never evidence it would have caught anything, and the distance between those two is where regressions live. Read-only and supplementary: it reports which tests are decorative rather than rewriting them.
+
+### Changed
+
+- **daftkit is a Claude Code plugin.** It ships a `.claude-plugin/plugin.json` at its root, so the whole repo installs as one directory — `git clone https://github.com/DaftVino/daftkit ~/.claude/skills/daftkit` — instead of one copied directory per skill. Nothing it installs can land on top of a skill you already had, which is the point: your skills directory is shared with everything else you use, and the old per-skill copy could overwrite a same-named neighbour with no sign that it had. Skills stay addressable under their plain name as well as the qualified `daftkit:orient`, so nothing you have written down about them changes.
+  **Copying individual skills still works, and the README now says what happens if you mix the two.** A loose copy **wins the plain name**: with `~/.claude/skills/orient/` present alongside the plugin, `orient` runs the loose copy and the plugin's is reachable only as `daftkit:orient`. That is measured rather than assumed, and it means a stale hand-copied skill quietly shadows the one you just updated. Pick one route per skill, or remove the loose directory after installing the plugin.
+
 ## [1.3.0] — 2026-08-16
 
 ### Added

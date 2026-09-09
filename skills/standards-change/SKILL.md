@@ -49,6 +49,10 @@ node ~/.claude/skills/standards-change/scripts/outbox.mjs --flush
 
 Bare `--flush` **lists and moves nothing.** Read it before flushing anything.
 
+**Two formats are supported.** Queueing through the CLI writes schema-1 `.json`. Hand-written `.md` files are supported too, as **opaque upstream notes** — prose queued under the earlier convention, before this tool existed. The listing gives a subtotal for each, because "11 pending" and "11 pending, none of which this tool can flush" are different situations and the first hides the second.
+
+**Any other extension is reported and refused.** Those files are named on stderr, left exactly where they are, and make bare `--flush` exit 1 — a queue the tool cannot fully see is the queue failing at its one job, whereas ordinary pending work is it succeeding. Nothing is ever deleted; a file this tool cannot read is not evidence it should be removed.
+
 ## Flush one note
 
 One note at a time, and you choose what it becomes.
@@ -60,6 +64,8 @@ and an issue is where evidence goes to be argued:
 node ~/.claude/skills/standards-change/scripts/outbox.mjs --flush \
   --note=<filename> --as=issue --daftplate=<path> --repo=<owner/repo>
 ```
+
+**A Markdown note flushes only as an issue, never directly to an ADR.** It carries no structured decision inputs, so routing it through the ADR path would publish a decision artifact whose decision, alternatives and consequences nobody supplied. Its title is the first H1, or the filename stem when there is none. Its issue body is the note **verbatim**, followed by a `Legacy-Outbox-ID:` derived from the filename and the original bytes — deterministic, so a retry after a partial failure searches for the same value and finds the issue it already filed rather than filing a second one. That footer goes to GitHub only: **the archived local copy keeps the original bytes.**
 
 **As an ADR** — only once a decision actually exists. All three sections are required,
 because an ADR without alternatives is a changelog entry wearing a hat:

@@ -9,6 +9,11 @@ allowed-tools: []
 A dial, not a switch to maximum. `/curious` turns it on for the session;
 `/curious off` restores the default. Acknowledge in one line.
 
+The **session default** is read from `~/.daftplate/curious` by the `SessionStart`
+hook, which names any toggle reading `on` in one line of its brief. `/daftplate`
+writes that file; this skill still only toggles the live session, and its
+`allowed-tools` stays `[]` — it gains no capability it did not have.
+
 ## The calibration
 
 The target is *somewhat* more inquisitive than default. Roughly: if you would

@@ -20,7 +20,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve, basename } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
@@ -96,13 +96,74 @@ export function enqueue(outboxRoot, { repoPath, rule, reason, localAdr = null } 
   return { path, filename, note };
 }
 
+/**
+ * Classify the outbox once, from one directory snapshot.
+ *
+ * `listPending()` filtered on `.endsWith('.json')`, so eleven hand-written
+ * Markdown notes — queued before this tool existed, under the earlier convention
+ * — sat in that exact directory while `--flush` reported `0 pending`. A queue
+ * that under-reports is worse than one that errors: "nothing to do" and "eleven
+ * notes I cannot parse" look identical, and the whole point of the outbox is
+ * that a deviation reaches daftplate.
+ *
+ * Regular files only, and never a directory: `isFile()` is false for a symlink
+ * too, so the existing traversal boundary is unchanged. Contents are never read
+ * here — discovery is not selection, and parsing during listing would change the
+ * existing malformed-JSON behaviour.
+ */
+export function inspectOutbox(outboxRoot) {
+  const empty = { json: [], markdown: [], pending: [], unsupported: [] };
+  if (!existsSync(outboxRoot)) return empty;
+
+  const json = [];
+  const markdown = [];
+  const unsupported = [];
+  for (const entry of readdirSync(outboxRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const lower = entry.name.toLowerCase();
+    if (lower.endsWith('.json')) json.push(entry.name);
+    else if (lower.endsWith('.md')) markdown.push(entry.name);
+    else unsupported.push(entry.name);
+  }
+  const sorted = (a) => a.sort();
+  return {
+    json: sorted(json),
+    markdown: sorted(markdown),
+    pending: sorted([...json, ...markdown]),
+    unsupported: sorted(unsupported),
+  };
+}
+
 /** Pending note filenames, sorted. A missing outbox is empty, not an error. */
 export function listPending(outboxRoot) {
-  if (!existsSync(outboxRoot)) return [];
-  return readdirSync(outboxRoot, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-    .map((entry) => entry.name)
-    .sort();
+  return inspectOutbox(outboxRoot).pending;
+}
+
+/** The first non-blank H1, or the filename stem. Never empty: a titleless issue
+ *  is unfindable, and not every hand-written note has a heading. */
+export function markdownTitle(text, filename) {
+  const heading = text.split(/\r?\n/).find((line) => /^#\s+\S/.test(line));
+  return heading ? heading.replace(/^#\s+/, '').trim() : filename.replace(/\.md$/i, '');
+}
+
+/** Deterministic identity for a note that never had an Outbox-ID.
+ *
+ *  Derived from the filename AND the original bytes, so a retry after a partial
+ *  failure searches for the same value and finds the issue it already filed.
+ *  A random id, or a search by title, would file the deviation twice — which is
+ *  the failure the JSON path's Outbox-ID search already exists to prevent. */
+export function legacyOutboxId(filename, text) {
+  return createHash('sha256').update(filename).update('\0').update(text).digest('hex');
+}
+
+/** The issue body: the note verbatim, then the identity footer.
+ *
+ *  Verbatim and first, because the note is prose a human wrote and reordering or
+ *  summarizing it loses the thing being escalated. The footer is appended to what
+ *  GitHub receives only — the archived local file keeps the original bytes. */
+export function markdownIssueBody(filename, text) {
+  return `${text}\n\n---\n\nLegacy-Outbox-ID: ${legacyOutboxId(filename, text)}\n`
+    + `Legacy-Outbox-File: ${filename}\n`;
 }
 
 /** Pure: the ADR body as a string, so it is testable without a filesystem. */
@@ -191,9 +252,47 @@ export function flush(outboxRoot, filename, target) {
     throw new Error(`refusing to flush ${filename}: filename must name one pending note; note left queued`);
   }
 
+  const raw = readFileSync(join(outboxRoot, filename), 'utf8');
+
+  // Markdown is an OPAQUE upstream note: prose a human wrote before this tool
+  // existed. It has no structured decision inputs, so it can only ever become an
+  // issue — routing it through renderAdr() would publish a decision artifact
+  // whose decision, alternatives and consequences nobody supplied.
+  if (filename.toLowerCase().endsWith('.md')) {
+    if (target?.as !== 'issue') {
+      throw new Error(`refusing to flush ${filename}: a Markdown note can only flush as an issue, not an ADR; note left queued`);
+    }
+    const { repo, runner } = target;
+    // Same order as the JSON path, and for the same reasons: privacy before any
+    // network call, search before create.
+    if (!runner.isPrivate(repo)) {
+      throw new Error(`refusing to flush ${filename}: issue target is not private; note left queued`);
+    }
+    const id = legacyOutboxId(filename, raw);
+    const existing = urlOf(runner.findIssue(repo, id));
+    if (existing) {
+      return {
+        markdown: raw, issueUrl: existing, duplicate: true,
+        flushedPath: moveToFlushed(outboxRoot, filename),
+      };
+    }
+    const issueUrl = urlOf(runner.createIssue(
+      repo, markdownTitle(raw, filename), markdownIssueBody(filename, raw),
+    ));
+    if (!issueUrl) {
+      throw new Error(`refusing to flush ${filename}: issue creation returned no URL; note left queued`);
+    }
+    // Moved only after a URL exists, and moved byte-for-byte: the footer goes to
+    // GitHub, never into the archived copy.
+    return {
+      markdown: raw, issueUrl, duplicate: false,
+      flushedPath: moveToFlushed(outboxRoot, filename),
+    };
+  }
+
   let note;
   try {
-    note = JSON.parse(readFileSync(join(outboxRoot, filename), 'utf8'));
+    note = JSON.parse(raw);
   } catch {
     throw new Error(`refusing to flush ${filename}: pending note is not valid JSON; note left queued`);
   }
@@ -307,11 +406,24 @@ function main(argv) {
     if (args.includes('--flush')) {
       const filename = flag(args, 'note');
       if (!filename) {
-        const pending = listPending(outboxRoot);
+        const { pending, json, markdown, unsupported } = inspectOutbox(outboxRoot);
         for (const name of pending) console.log(name);
-        console.log(`${pending.length} pending note(s) in ${outboxRoot}`);
+        // Subtotals, because "11 pending" and "11 pending, 0 of which this tool
+        // can flush" are different situations and the first hides the second.
+        console.log(
+          `${pending.length} pending note(s) in ${outboxRoot}`
+          + ` (${json.length} JSON, ${markdown.length} Markdown)`,
+        );
         console.error('name one with --note=<filename> --as=adr|issue to flush it');
-        return 0;
+        if (unsupported.length) {
+          // Reported and left alone. Nothing here deletes, and a file this tool
+          // cannot read is not evidence that it should be removed.
+          console.error(`${unsupported.length} file(s) in a format this tool cannot flush, left untouched:`);
+          for (const name of unsupported) console.error(`  ${name}`);
+        }
+        // Non-zero ONLY for the unreadable ones. Pending work is the queue doing
+        // its job; a file the queue cannot see is the queue failing at it.
+        return unsupported.length ? 1 : 0;
       }
       const result = flush(outboxRoot, filename, {
         as: flag(args, 'as'),

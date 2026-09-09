@@ -1,0 +1,6 @@
+{
+  "name": "daftkit",
+  "version": "1.4.0",
+  "description": "Portable agent skills for Claude Code — orient, handoff, continuum, audit and more. No build step, no dependencies.",
+  "author": { "name": "James M. Baker" }
+}
