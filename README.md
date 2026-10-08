@@ -55,6 +55,10 @@ Reads a repo through a lens you choose and writes an editable `.excalidraw` file
 
 Reads raw test bodies, names a concrete mutant for each assertion, and reports which assertions would accept that mutant. It exists because a passing suite is evidence a test *executed*, never evidence it would have *caught* anything, and the gap between those two is where regressions live. Read-only and supplementary: it does not rewrite your tests, it tells you which of them are decorative.
 
+### `/dress` — set project and priority on synced Linear issues
+
+If your repo creates issues in GitHub and its `ROADMAP.md` `Board:` line names Linear, `/dress` fills in a newly synced issue's missing project and priority. It finds the Linear issue through the sync's linkback comment, waits up to three minutes for that comment to appear, confirms the GitHub attachment, and reads the saved values back. The project comes from the `Board:` line; the priority comes from the issue template or from you, never from a guess. It does not overwrite values somebody already set. On any other repo it produces no output, makes no network request and asks no question. It uses the Linear tools connected to your Claude session, so the repository holds no API key.
+
 ### `/standards-change` — somewhere a deliberate deviation can live
 
 When a repo breaks a standard on purpose, the reason belongs somewhere a future reader will find it — not in a commit message nobody greps. A note naming the rule and the reason queues locally, and a later flush turns one note into a decision record or a private issue. Nothing is ever deleted: a flush *moves* the note, byte-identical, and only after the artifact exists, so a failed flush leaves it pending. It imports Node builtins only, because it runs from repos that have no daftplate checkout.

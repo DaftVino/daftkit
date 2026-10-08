@@ -124,9 +124,9 @@ learn nothing.
 dressing was not verified from here.** Use this wording, or wording that makes
 the same claim:
 
-- Filed this session; dressing not verified from here — `#168` *(title)*,
-  `#169` *(title)*. Confirm project, priority and blocking relations on the
-  board (§6.5.1).
+- Filed this session; dressing not verified from here — `<short>-168` *(title)*,
+  `<short>-169` *(title)*. If `/handoff` did not already, run `/dress 168 169`;
+  it sets project and priority and reads them back (§6.5.1).
 
 The distinction is the whole point of the step. This skill has no Linear access,
 so it cannot know whether an issue is already dressed, and a line reading *these
@@ -142,11 +142,11 @@ Two things follow from having no board access, and both are deliberate:
   and in most cases no Linear at all, and one workspace's server name has no
   business in it. Anyone revisiting that is arguing about distribution, not about
   whether the API can do it.
-- **`gh` gives the GitHub number and nothing else.** Under §6.5.1 an issue is
-  named `#N (TEAM-M)` wherever a human reads it, and the second identifier lives
-  on the board this skill cannot read. Write the number you have rather than
-  guessing the one you do not; the next session, which can reach the board, is
-  who completes it.
+- **`gh` gives the GitHub number, and that is all the name needs.** Under §6.5.1
+  (ADR 0014) an issue on this variant is written `<short>-<N>` wherever a human
+  reads it — the `Board:` line's project link text, a hyphen, and the GitHub
+  number, as in `daftplate-168`. The Linear key never appears in prose, so there
+  is nothing on the board this skill needs to read in order to name an issue.
 
 Nothing found here changes which of §8's three terminal states is reached. An
 undressed issue is a fact about the board, not a defect in the prompt, and
@@ -272,7 +272,7 @@ Then, for each path your `## Read first` manifest names, test whether it exists
 
 Then call `validate(promptText, context)` from
 `<skill-dir>/scripts/validate-prompt.mjs`, passing
-`{ branch, head, branches, phaseContractPath, openIssues, existingPaths }`:
+`{ branch, head, branches, phaseContractPath, openIssues, existingPaths, board }`:
 
 | Key | From | Rule it arms |
 |---|---|---|
@@ -282,6 +282,7 @@ Then call `validate(promptText, context)` from
 | `phaseContractPath` | the plan document this phase is executing | `manifest-contract-first` |
 | `openIssues` | the `gh issue list` above, as `number[]` | `issue-closed` |
 | `existingPaths` | the manifest paths that exist, as `string[]` | `manifest-missing` |
+| `board` | `readBoard(<ROADMAP.md text>)` from the same file; `null` when the repo has no `ROADMAP.md` | `issue-bare`, `issue-linear-key`, and `issue-closed` on `<short>-<N>` |
 
 **`branch` is the branch the prompt's *reader* will be standing on, not the one
 writing it.** Every other rule here is time-invariant: a manifest entry's size,
@@ -316,8 +317,9 @@ and refuses the prompt wholesale. Omit `openIssues` entirely, and **say so in
 chat**: "`issue-closed` stood down — `gh` could not list open issues, so no `#N`
 in this prompt was checked." A rule that turns itself off in silence is the
 defect this section exists to close, so the stand-down is a stated outcome and
-never an assumed one. `issue-unpaired` still runs: it reads the prompt's own text
-and needs no issue state.
+never an assumed one. `issue-unpaired` still runs off a Linear board, and
+`issue-bare` and `issue-linear-key` on one: they read the prompt's own text and
+need no issue state.
 
 The same holds for `existingPaths`. Omit it if you could not test the paths, and
 say `manifest-missing` stood down.
@@ -340,9 +342,11 @@ Every rule it can report, and what fixes it:
 | `branch-unnamed` | Backtick the branch in `## Branch` |
 | `branch-mismatch` | Name the branch `context.branch` carries — for a launch pad that is where the *reader* will stand, not where you are writing from (§7). No escape hatch: the rule is right, and passing the writer's branch was the defect |
 | `branch-unknown` | A backticked ref in `## Branch` the repo does not have. Three causes: a real typo; a create line the vocabulary missed, so widen it, never weaken the rule; or a backticked filename or tag — `` `package.json` ``, `` `v1.2.0` `` — which the section reads as a branch. Unbacktick it, or move it out of `## Branch` |
-| `issue-closed` | A `#N` in the prompt is not in `context.openIssues`. `owner/repo#N` is exempt — another repo's number is not this repo's. Stands down entirely when `openIssues` is absent |
-| `issue-unpaired` | A `FORGE-M` written without its `#N` half. §6.5.1 names an issue `#N (FORGE-M)`, and the two sequences drift, so a Linear id alone can be checked against nothing. Write the pair. Never stands down — it reads the prompt's own text |
-| `issue-unqualified` | A `#N` wearing an unslashed prefix — `daftplate#152`, `post-#123`. §6.5.1 permits `#N` for this repo's issue and `owner/repo#N` for another's, and no third form; the third is ambiguous by construction, so it is checked against nothing and `issue-closed` goes quiet on it. Add the owner, or drop the prefix. Never stands down — the spelling is a property of the prompt's own text |
+| `issue-closed` | A `#N` in the prompt, or under a Linear board a `<short>-<N>`, is not in `context.openIssues`. `owner/repo#N` is exempt — another repo's number is not this repo's. Stands down entirely when `openIssues` is absent |
+| `issue-unpaired` | Off a Linear board only: a `FORGE-M` written without its `#N` half, which can be checked against nothing because the two sequences drift. Kept unchanged from before ADR 0014, so a repo not on the Linear variant sees no difference. Write the GitHub number. Never stands down |
+| `issue-bare` | Under a Linear board only: a bare `#N`. §6.5.1 (ADR 0014) names this repo's issue `<short>-<N>`, because a bare `#N` resolves against whatever repository the reader is standing in. `owner/repo#N` is exempt. Write `<short>-<N>`. Stands down, and says so, when no board was supplied |
+| `issue-linear-key` | Under a Linear board only: any `<TEAM>-<M>`, the old pair included. Under ADR 0014 the Linear key never appears in prose; name the issue `<short>-<N>` by its GitHub number. The team key comes from the `Board:` line, not from this file. Stands down, and says so, when no board was supplied |
+| `issue-unqualified` | A `#N` wearing an unslashed prefix — `daftplate#152`, `post-#123`. No §6.5.1 form puts a prefix before a `#` — this repo's issue is `#N`, or `<short>-<N>` on the Linear variant, and another repo's is `owner/repo#N`; the third is ambiguous by construction, so it is checked against nothing and `issue-closed` goes quiet on it. Add the owner, or drop the prefix. Never stands down — the spelling is a property of the prompt's own text |
 | `closing-keyword` | A GitHub closing keyword standing next to a literal issue number — `Fixes` immediately followed by `#13`. GitHub's parser ignores code spans, block quotes and negation, so a prompt *warning* that such a footer would be wrong closes the issue the moment the prose is copied into a PR body; it has fired twice in this workspace, once on a deploy blocker. §6.5.1's sanctioned forms: break the token with an explicit `+` between the halves, or name the issue and describe the keyword in words. The one rule here that reads the raw text — a fence exempts nothing, because the parser's behaviour inside one is unmeasured and the copy does not carry the fence. Never stands down |
 | `exit-uncheckable` | `## Exit criteria` needs a command with an argument — `` `npm test` ``, not `` `make` `` — or a fenced block. A single token is a name, not something to run |
 | `unknowns-empty` | Type `- none` deliberately. An empty section is not a claim of safety |
@@ -350,7 +354,7 @@ Every rule it can report, and what fixes it:
 Or from a shell:
 
 ```
-node "<skill-dir>/scripts/validate-prompt.mjs" <prompt-path> --branch <name> --branches <a,b,c> --open-issues <n,n,n>
+node "<skill-dir>/scripts/validate-prompt.mjs" <prompt-path> --branch <name> --branches <a,b,c> --open-issues <n,n,n> --roadmap ROADMAP.md
 ```
 
 Exit 0 clean, 1 on violations, 2 on a usage error. `--branch` is required —
@@ -358,6 +362,12 @@ without it `branch-mismatch` would stand down and the wrong branch would print
 `clean`. Spot-checking a committed launch pad takes the same value §7 chooses,
 which is usually `--branch main`; passing `$(git branch --show-current)` out of
 habit re-creates the false refusal this section exists to prevent.
+
+`--roadmap` passes the board the same way `board` does above. It is a flag, never
+a read of the working directory, so the verdict depends only on the arguments;
+omit it only when the repo has no `ROADMAP.md`, and the CLI then prints
+`stood-down:` for `issue-bare` and `issue-linear-key`. A path it cannot read is
+a usage error.
 
 `--branches` and `--open-issues` stay optional, because the CLI must never shell
 out to `git` or `gh` itself and a caller may have neither answer. They are not

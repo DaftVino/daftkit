@@ -76,6 +76,12 @@ node ~/.claude/skills/standards-change/scripts/outbox.mjs --flush \
   --decision="..." --alternatives="..." --consequences="..."
 ```
 
+**After a flush to an issue, invoke `/dress` with the issue number it printed.**
+The outbox files with `gh issue create` and stays Linear-free. On a
+Linear-variant daftplate the new issue arrives on the board undressed, and
+`/dress` sets its project and asks for its priority, because an outbox note
+carries no Priority field. On any other repo `/dress` does nothing.
+
 It renders a **Proposed** ADR. Accepting it is a separate, human act.
 
 ## What it will not do

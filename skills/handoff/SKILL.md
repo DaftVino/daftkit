@@ -7,6 +7,7 @@ allowed-tools:
   - Edit
   - Grep
   - Glob
+  - Skill
 ---
 
 # handoff
@@ -26,7 +27,23 @@ the state into the PR description instead. Do not create a design doc purely to
 hold a handoff. On the Linear-board variant (repo-standards §6.5.1), write it as
 a comment on the working issue instead — Linear is where that repo's state lives.
 
-## 2. Write the note
+## 2. Dress what this session filed
+
+On a Linear-variant repo, an issue filed this session may still be undressed:
+its sync lands about two minutes after filing, and the reminder that follows a
+`gh issue create` can fire before it. List what this session filed:
+
+```
+gh issue list --state all --search "created:>=<session-start> author:@me" --json number --limit 30
+```
+
+and invoke `/dress` with those numbers. It checks the board itself and does
+nothing at all on a repo that is not on the Linear variant, so call it without
+checking first. Put any issue it reports as still undressed into the note's
+**What is still open**, by `<short>-<N>`. `gh` missing or no remote → skip this
+step. A note is still worth writing without it.
+
+## 3. Write the note
 
 One `###` entry, dated, covering exactly this:
 
@@ -49,7 +66,7 @@ Be specific enough that a session with no memory of this one can act on it.
 because positional args became glob patterns — the script is now bare
 `node --test`, do not revert" is the whole point.
 
-## 3. Save the working context
+## 4. Save the working context
 
 Run gstack `/context-save` to capture the live session state. This is
 complementary, not redundant: the handoff note is durable and committed and
@@ -57,7 +74,7 @@ survives into the repo's history; the context save is a machine-restorable
 snapshot for the very next session. Write the note first — if the session dies
 mid-save, the committed note is what survives.
 
-## 4. Commit
+## 5. Commit
 
 ```
 git add docs/designs/<the plan doc>
@@ -67,7 +84,7 @@ git commit -m "docs: record the <phase> handoff note"
 Commit it even if nothing else is ready to commit. An uncommitted handoff note
 is not a handoff.
 
-## 5. Report
+## 6. Report
 
 Print the next session's first command and its read manifest, so resuming is a
 copy-paste rather than a rediscovery. Then stop — do not start the next phase.
