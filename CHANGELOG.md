@@ -4,6 +4,12 @@ All notable changes to daftkit are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-08
+
+### Added
+
+- **`/dress`**: on a repo whose `ROADMAP.md` `Board:` line names Linear, it dresses one or more newly filed GitHub issues. It waits up to three minutes for the sync's linkback comment, confirms that the Linear issue links back to the GitHub issue, sets a missing project from the `Board:` line, and sets a missing priority from the issue template or asks the user. It then reads the values back and reports each issue as `<short>-<N>`. It never computes a Linear key or overwrites an existing project or priority. On any other repo it produces no output, makes no network request and asks no question.
+
 ## [1.4.0] — 2026-09-08
 
 ### Added
