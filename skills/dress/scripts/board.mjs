@@ -13,7 +13,11 @@
 // readBoard is the third copy of one parse; a parity test in daftplate holds the
 // three to one answer.
 //
+// It also resolves Linear keys to GitHub issues for the launch-pad validator
+// (`--resolve`, ADR 0015), by the same linkback route and under the same skip.
+//
 // Usage: node board.mjs <issue-number> [--wait]
+//        node board.mjs --resolve <KEY>...
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -97,6 +101,71 @@ export async function waitForLinkback(look, { attempts = WAIT.attempts, interval
   return key;
 }
 
+/** Linear-variant repos close-and-archive at about 200 issues (§6.5.1), so an
+ *  open list this long is complete in practice. A list that reaches it may have
+ *  been cut off, and a resolver that read half the open issues would report a
+ *  real open key as unresolved, so the whole map is declared unavailable. */
+export const OPEN_LIMIT = 1000;
+
+/**
+ * Which GitHub issue each Linear key names, read from the linkback comments the
+ * sync posts (ADR 0015 ruling 6). It needs no Linear API key: the route is the
+ * one dressing already trusts, and it is never computed from a number.
+ *
+ * Open issues are listed and every one's linkback is read. Closed issues are too
+ * many to read, so each key is searched for among them, and a hit counts only if
+ * that issue's own linkback carries the key: a search hit says the text appears
+ * somewhere, not that this issue is the key's twin.
+ *
+ * Returns `{ available, keys: { KEY: { status, numbers } } }`, where status is
+ * `open` or `closed` for exactly one match, `ambiguous` for two or more, and
+ * `unresolved` for none. Any `gh` failure makes the whole map unavailable rather
+ * than partial, because a partial map reads a real key as unresolved.
+ *
+ * `gh(args)` returns stdout and throws on failure, so every status is testable
+ * without a network.
+ */
+export function resolveLinearKeys(keys, { repo, teamKey, gh: run }) {
+  const own = new RegExp(`^${teamKey}-\\d+$`);
+  const wanted = [...new Set(keys)].filter((k) => own.test(k)).sort();
+  const unavailable = { available: false, keys: {} };
+  try {
+    const comments = new Map();
+    const keyOf = (n) => {
+      if (!comments.has(n)) {
+        comments.set(n, linearKeyFromComments(JSON.parse(run(['api', `repos/${repo}/issues/${n}/comments`])), teamKey));
+      }
+      return comments.get(n);
+    };
+
+    const open = JSON.parse(run(['issue', 'list', '--repo', repo, '--state', 'open',
+      '--limit', String(OPEN_LIMIT), '--json', 'number'])).map((i) => i.number);
+    if (open.length >= OPEN_LIMIT) return unavailable;
+    const openByKey = new Map();
+    for (const n of open) {
+      const k = keyOf(n);
+      if (k) openByKey.set(k, [...(openByKey.get(k) ?? []), n]);
+    }
+
+    const out = {};
+    for (const key of wanted) {
+      const hits = JSON.parse(run(['search', 'issues', key, '--repo', repo, '--state', 'closed',
+        '--json', 'number', '--limit', '100'])).map((i) => i.number);
+      const closed = hits.filter((n) => keyOf(n) === key);
+      const opened = openByKey.get(key) ?? [];
+      const numbers = [...new Set([...opened, ...closed])].sort((a, b) => a - b);
+      const status = numbers.length >= 2 ? 'ambiguous'
+        : opened.length === 1 ? 'open'
+          : closed.length === 1 ? 'closed'
+            : 'unresolved';
+      out[key] = { status, numbers };
+    }
+    return { available: true, keys: out };
+  } catch {
+    return unavailable;
+  }
+}
+
 /** The repo root: git's answer when git is there, else the nearest `.git` above.
  *  A run from a subdirectory must not read "no ROADMAP.md" and skip a repo that
  *  is on the Linear variant. */
@@ -119,10 +188,44 @@ function gh(args, cwd) {
   return r.stdout;
 }
 
-const USAGE = 'usage: node board.mjs <issue-number> [--wait]';
+const USAGE = 'usage: node board.mjs <issue-number> [--wait] | node board.mjs --resolve <KEY>...';
+
+function readLinearBoard(cwd) {
+  const root = findRoot(cwd);
+  const roadmap = join(root, 'ROADMAP.md');
+  return { root, board: existsSync(roadmap) ? readBoard(readFileSync(roadmap, 'utf8')) : null };
+}
+
+// `--resolve`: the key map /continuum hands the launch-pad validator. Under the
+// same skip rule as dressing: no Linear board, no output and no `gh` call.
+function resolveMain(keys, cwd) {
+  if (keys.length === 0 || keys.some((k) => !/^[A-Z][A-Z0-9]*-\d+$/.test(k))) {
+    console.error(USAGE);
+    return 2;
+  }
+  const { root, board } = readLinearBoard(cwd);
+  if (board?.variant !== 'linear') return 0;
+  let result = { available: false, keys: {} };
+  if (board.teamKey) {
+    try {
+      const repo = gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], root).trim();
+      result = resolveLinearKeys(keys, { repo, teamKey: board.teamKey, gh: (args) => gh(args, root) });
+    } catch {
+      // gh missing or failing: the map is unavailable, which the validator
+      // reports as "could not verify". Never an error that fails the caller.
+    }
+  }
+  console.log(JSON.stringify(result));
+  return 0;
+}
 
 export async function main(argv, { cwd = process.cwd(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   const rest = argv.slice(2);
+  if (rest[0] === '--resolve') return resolveMain(rest.slice(1), cwd);
+  if (rest.includes('--resolve')) {
+    console.error(USAGE);
+    return 2;
+  }
   const wait = rest.includes('--wait');
   const positional = rest.filter((a) => !a.startsWith('--'));
   const number = Number(positional[0]);
@@ -131,9 +234,7 @@ export async function main(argv, { cwd = process.cwd(), sleep = (ms) => new Prom
     return 2;
   }
 
-  const root = findRoot(cwd);
-  const roadmap = join(root, 'ROADMAP.md');
-  const board = existsSync(roadmap) ? readBoard(readFileSync(roadmap, 'utf8')) : null;
+  const { root, board } = readLinearBoard(cwd);
 
   // The skip. Silent, and before any `gh` call: a repo not on the Linear variant
   // sees no behaviour change at all.

@@ -40,7 +40,8 @@ gh issue list --state all --search "created:>=<session-start> author:@me" --json
 and invoke `/dress` with those numbers. It checks the board itself and does
 nothing at all on a repo that is not on the Linear variant, so call it without
 checking first. Put any issue it reports as still undressed into the note's
-**What is still open**, by `<short>-<N>`. `gh` missing or no remote → skip this
+**What is still open**, by Linear key, as `/dress` reports it (its URL marked
+`(pending Linear sync)` where the sync has not landed). `gh` missing or no remote → skip this
 step. A note is still worth writing without it.
 
 ## 3. Write the note
