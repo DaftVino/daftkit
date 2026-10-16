@@ -4,6 +4,14 @@ All notable changes to daftkit are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-10-16
+
+### Changed
+
+- **`/dress` reports each issue by its Linear key**, `<teamKey>-<M>` as in `ENG-412`, read from the sync's linkback comment, never computed from the GitHub number. When the linkback has not landed it names the issue by its URL followed by `(pending Linear sync)`. This replaces the `<short>-<N>` form 1.5.0 reported. `/dress`'s helper gains `board.mjs --resolve <KEY>...`, which builds a key map from the linkback comments with `gh` alone and prints `{ available, keys }`; on a repo without a Linear board it prints nothing.
+- **`/continuum` checks Linear keys in the prompt it writes.** On a repo with a Linear board the validator accepts `<teamKey>-<M>` and checks each key against the map `/dress`'s helper builds: a key on a closed issue, or on more than one issue, is refused. A key no linkback carries, or a map that could not be built, is listed as *could not verify* and passes. A new rule refuses the retired `<short>-<N>`, and the two rules that enforced the old paired form are removed. On any other repo a Linear key is ordinary text.
+- **`/handoff` lists what is still open by Linear key** on a repo with a Linear board.
+
 ## [1.5.0] — 2026-10-08
 
 ### Added

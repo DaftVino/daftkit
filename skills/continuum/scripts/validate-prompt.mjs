@@ -51,10 +51,9 @@ export const REFUSAL = {
   BRANCH_MISMATCH: 'branch-mismatch',
   BRANCH_UNKNOWN: 'branch-unknown',
   ISSUE_CLOSED: 'issue-closed',
-  ISSUE_UNPAIRED: 'issue-unpaired',
   ISSUE_UNQUALIFIED: 'issue-unqualified',
   ISSUE_BARE: 'issue-bare',
-  ISSUE_LINEAR_KEY: 'issue-linear-key',
+  ISSUE_SHORT_FORM: 'issue-short-form',
   CLOSING_KEYWORD: 'closing-keyword',
   EXIT_UNCHECKABLE: 'exit-uncheckable',
   UNKNOWNS_EMPTY: 'unknowns-empty',
@@ -360,12 +359,6 @@ const ISSUE_REF = /(?<![\w/-])#(\d+)/g;
 // The fix there is the space the prose wanted anyway.
 const UNQUALIFIED_REF = /(?<![\w/-])([A-Za-z][\w.-]*)#(\d+)/g;
 
-// A Linear id, and the pairing that redeems it. No lookbehind on the paired
-// form: `owner/repo#4 (FORGE-9)` is a legitimate pair even though its `#4` is
-// another repo's number.
-const LINEAR_REF = /\bFORGE-\d+\b/g;
-const PAIRED_REF = /#\d+\s*\(\s*(FORGE-\d+)\s*\)/g;
-
 export function issueRefs(text) {
   const { masked } = maskFences(text);
   const seen = new Set();
@@ -375,11 +368,6 @@ export function issueRefs(text) {
   return [...seen].sort((a, b) => a - b);
 }
 
-// Linear ids written without their GitHub half. A prompt naming only `FORGE-246`
-// carries no `#N` at all, so issue-closed has nothing to compare and every stale
-// reference in it passes — the rule standing down without saying so. Resolving
-// the Linear id is not an option (the two sequences drift), and §6.5.1 already
-// requires the pair, so the bare form is refused rather than guessed at.
 // `word#N` — neither §6.5.1 spelling. Returned as the whole matched token, not
 // as a number: the prefix is the defect and the message has to quote it back, and
 // two different prefixes on the same number are two separate violations.
@@ -446,10 +434,12 @@ export function closingKeywordRefs(text) {
   return [...seen].sort();
 }
 
-// --- the board, and the identifier it implies (§6.5.1, ADR 0014) ----------
+// --- the board, and the identifier it implies (§6.5.1, ADR 0015) ----------
 //
-// A repo on the Linear variant names an issue `<short>-<N>`, where `<short>` is
-// the project link text on its single `Board:` line. That line is the repo's one
+// A repo on the Linear variant names an issue by its Linear key `<teamKey>-<M>`,
+// where `<teamKey>` is the team on its single `Board:` line; the project link
+// text there is its short name, which the retired `<short>-<N>` form (ADR 0014)
+// was built from and issue-short-form refuses. That line is the repo's one
 // checked declaration of its variant (check-roadmap.mjs refuses two), which is
 // why it is read here and nowhere else. readBoard is pure: main() reads the file
 // and hands the text over, so validate() stays a function of its arguments.
@@ -491,7 +481,7 @@ const usableLinear = (board) => board?.variant === 'linear'
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// `<short>-<N>`, as numbers. The trailing guard is the version-string case:
+// The retired `<short>-<N>`, as numbers. The trailing guard is the version-string case:
 // `daftplate-1.10.0` is a release, not issue 1, and a dot followed by a digit is
 // what tells them apart. A sentence ending `daftplate-357.` still reads as 357.
 export function shortRefs(text, shortName) {
@@ -504,8 +494,9 @@ export function shortRefs(text, shortName) {
   return [...seen].sort((a, b) => a - b);
 }
 
-// Any `<TEAM>-<M>` at all, paired or not: under ADR 0014 the Linear key never
-// appears in prose, so the old pair is as wrong as the bare key.
+// This board's `<teamKey>-<M>`, the form ADR 0015 names an issue by. The team
+// key is the board's, never a hardcoded one: another team's key is foreign text
+// here, as `owner/repo#N` is.
 export function linearKeyRefs(text, teamKey) {
   const { masked } = maskFences(text);
   const re = new RegExp(`\\b${escapeRegExp(teamKey)}-\\d+\\b`, 'g');
@@ -516,15 +507,26 @@ export function linearKeyRefs(text, teamKey) {
   return [...seen].sort();
 }
 
-export function unpairedLinearRefs(text) {
-  const { masked } = maskFences(text);
-  const seen = new Set();
-  for (const line of masked) {
-    const paired = new Set();
-    for (const m of line.matchAll(PAIRED_REF)) paired.add(m.index + m[0].indexOf(m[1]));
-    for (const m of line.matchAll(LINEAR_REF)) if (!paired.has(m.index)) seen.add(m[0]);
+// What a resolved key map says about one key, as a violation message, a
+// could-not-verify message, or null for an open key. The map is the resolver's
+// JSON, built by the caller from the sync's linkback comments; nothing here
+// reaches GitHub. A key that resolves to nothing is never shown wrong: a typo, a
+// same-team key from another repository and search lag all look the same.
+function keyVerdict(key, map) {
+  const entry = map.available === true ? map.keys?.[key] : null;
+  if (!entry) {
+    return { unverified: `${key} could not verify: ${map.available === true
+      ? 'the key map was not asked about it'
+      : 'the key map is unavailable (gh failed, or the open list hit its limit)'}; it is not counted as open` };
   }
-  return [...seen].sort();
+  if (entry.status === 'open') return null;
+  if (entry.status === 'closed') {
+    return { closed: `${key} is closed (issue ${entry.numbers.join(', ')}); a prompt pointing at closed work sends the next session to re-do it` };
+  }
+  if (entry.status === 'ambiguous') {
+    return { closed: `${key} is carried by the linkback of more than one issue (${entry.numbers.join(', ')}); a key that names two issues sends the next session to the wrong one` };
+  }
+  return { unverified: `${key} could not verify: no issue's linkback carries it (a typo, another repository's key, or search lag); it is not counted as open` };
 }
 
 export function validate(promptText, context) {
@@ -559,11 +561,13 @@ export function validate(promptText, context) {
   ].filter((r) => r.body !== undefined).map((r) => ({ section: r.section, text: r.body.join('\n') }));
 
   // The board decides which identifier rules apply. Only a Linear board whose
-  // short name and team key both parse turns the ADR 0014 rules on; anything else
-  // leaves the pre-ADR-0014 behaviour exactly as it was, which is the owner's
-  // ruling that nothing changes outside the Linear variant.
+  // short name and team key both parse turns the Linear rules on; anything else
+  // leaves the default-variant behaviour as it was, which is the owner's ruling
+  // that nothing changes outside the Linear variant. (ADR 0015 retired
+  // issue-unpaired there: off the variant a Linear key is foreign text.)
   const board = ctx.board && typeof ctx.board === 'object' ? ctx.board : null;
   const linear = usableLinear(board) ? board : null;
+  const unverified = [];
 
   if (Array.isArray(ctx.openIssues)) {
     const open = new Set(ctx.openIssues.map(Number));
@@ -574,42 +578,34 @@ export function validate(promptText, context) {
             `#${n} is not open; a prompt pointing at closed work sends the next session to re-do it`));
         }
       }
-      // The ADR 0014 form is a GitHub number too, and the reason a prefixed
-      // number was ever refused is that it was checked against nothing. Here it
-      // is checked.
-      if (linear) {
-        for (const n of shortRefs(text, linear.shortName)) {
-          if (!open.has(n)) {
-            violations.push(violation(REFUSAL.ISSUE_CLOSED, section,
-              `${linear.shortName}-${n} is not open; a prompt pointing at closed work sends the next session to re-do it`));
-          }
-        }
-      }
     }
   }
 
-  // No context key gates this one off a Linear board. The pairing is a property
-  // of the text, so there is nothing for a caller to supply and nothing to stand
-  // down. Under a Linear board issue-linear-key below replaces it, because ADR
-  // 0014 refuses the pair as firmly as the bare key.
-  if (!linear) {
+  // The ADR 0015 form, checked against the resolved key map. Closed and
+  // ambiguous fail; anything the map cannot vouch for is listed as could not
+  // verify and never counted as open. With no map the caller stands it down.
+  if (linear && ctx.issueKeys && typeof ctx.issueKeys === 'object') {
     for (const { section, text } of regions) {
-      for (const id of unpairedLinearRefs(text)) {
-        violations.push(violation(REFUSAL.ISSUE_UNPAIRED, section,
-          `${id} carries no #N half; §6.5.1 names an issue #N (FORGE-M), and a Linear id alone cannot be checked against GitHub issue state`));
+      for (const key of linearKeyRefs(text, linear.teamKey)) {
+        const verdict = keyVerdict(key, ctx.issueKeys);
+        if (verdict?.closed) violations.push(violation(REFUSAL.ISSUE_CLOSED, section, verdict.closed));
+        if (verdict?.unverified) unverified.push(violation(REFUSAL.ISSUE_CLOSED, section, verdict.unverified));
       }
     }
   }
 
   if (linear) {
+    const form = `${linear.teamKey}-<M>`;
     for (const { section, text } of regions) {
       for (const n of issueRefs(text)) {
         violations.push(violation(REFUSAL.ISSUE_BARE, section,
-          `#${n} is a bare GitHub number on a Linear-variant repo; §6.5.1 names it ${linear.shortName}-${n}, because a bare #N resolves against whatever repository the reader is standing in`));
+          `#${n} is a bare GitHub number on a Linear-variant repo; §6.5.1 names the issue by its Linear key ${form}, read from its linkback comment, because a bare #N resolves against whatever repository the reader is standing in`));
       }
-      for (const id of linearKeyRefs(text, linear.teamKey)) {
-        violations.push(violation(REFUSAL.ISSUE_LINEAR_KEY, section,
-          `${id} is a Linear key in prose; under ADR 0014 it never appears there — name the issue ${linear.shortName}-<N> by its GitHub number, and never compute one number from the other`));
+      // The ADR 0014 form, retired by ADR 0015 because it cannot be found in
+      // Linear. Refused so it cannot creep back from older prose.
+      for (const n of shortRefs(text, linear.shortName)) {
+        violations.push(violation(REFUSAL.ISSUE_SHORT_FORM, section,
+          `${linear.shortName}-${n} is the retired ADR 0014 form; §6.5.1 names the issue by its Linear key ${form}, read from its linkback comment, and never computed from the number`));
       }
     }
   }
@@ -623,7 +619,7 @@ export function validate(promptText, context) {
       // Off a Linear board the message is byte-for-byte what it was before ADR
       // 0014, because the golden test holds non-Linear output to that.
       violations.push(violation(REFUSAL.ISSUE_UNQUALIFIED, section, linear
-        ? `${ref} is no §6.5.1 spelling; write ${linear.shortName}-${n} for this repo's issue or owner/repo#${n} for another's, because a prefix before a # is checked against nothing`
+        ? `${ref} is no §6.5.1 spelling; name this repo's issue by its Linear key ${linear.teamKey}-<M>, or write owner/repo#${n} for another repo's, because a prefix before a # is checked against nothing`
         : `${ref} is neither §6.5.1 spelling; write #${n} for this repo's issue or owner/repo#${n} for another's, because a prefixed #N is checked against nothing`));
     }
   }
@@ -653,19 +649,20 @@ export function validate(promptText, context) {
   }
 
   violations.sort((a, b) => SECTIONS.indexOf(a.section) - SECTIONS.indexOf(b.section) || RULES.indexOf(a.rule) - RULES.indexOf(b.rule));
-  return { ok: violations.length === 0, violations };
+  return { ok: violations.length === 0, violations, unverified };
 }
 
-const USAGE = 'usage: node validate-prompt.mjs <prompt-path> --branch <name> [--branches <a,b,c>] [--open-issues <1,2,3>] [--roadmap <path>]';
+const USAGE = 'usage: node validate-prompt.mjs <prompt-path> --branch <name> [--branches <a,b,c>] [--open-issues <1,2,3>] [--roadmap <path>] [--issue-keys <path>]';
 
 function readArgv(argv) {
   const rest = argv.slice(2);
-  const opts = { path: null, branch: null, branches: [], openIssues: null, roadmap: null };
+  const opts = { path: null, branch: null, branches: [], openIssues: null, roadmap: null, issueKeys: null };
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
     if (arg === '--branch') opts.branch = rest[++i] ?? null;
     else if (arg === '--branches') opts.branches = (rest[++i] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     else if (arg === '--roadmap') opts.roadmap = rest[++i] ?? '';
+    else if (arg === '--issue-keys') opts.issueKeys = rest[++i] ?? '';
     else if (arg === '--open-issues') opts.openIssues = (rest[++i] ?? '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0);
     else if (arg.startsWith('--')) return null;
     else if (opts.path === null) opts.path = arg;
@@ -723,10 +720,26 @@ function main(argv) {
   }
   if (opts.roadmap === null) {
     stoodDown.push(['issue-bare', 'no --roadmap, so no board to say whether this repo is on the Linear variant']);
-    stoodDown.push(['issue-linear-key', 'no --roadmap, so no board to say whether this repo is on the Linear variant']);
+    stoodDown.push(['issue-short-form', 'no --roadmap, so no board to say whether this repo is on the Linear variant']);
   } else if (board?.variant === 'linear' && !usableLinear(board)) {
     stoodDown.push(['issue-bare', 'the Board: line names Linear but its project link text or team key does not parse']);
-    stoodDown.push(['issue-linear-key', 'the Board: line names Linear but its project link text or team key does not parse']);
+    stoodDown.push(['issue-short-form', 'the Board: line names Linear but its project link text or team key does not parse']);
+  }
+  // The key map, by flag like the board. It is built by the caller's resolver
+  // from linkback comments; this file never calls gh to build it.
+  let issueKeys = null;
+  if (opts.issueKeys !== null) {
+    try {
+      if (opts.issueKeys === '') throw new Error('empty path');
+      issueKeys = JSON.parse(readFileSync(opts.issueKeys, 'utf8'));
+      if (!issueKeys || typeof issueKeys !== 'object') throw new Error('not a key map');
+    } catch (e) {
+      console.error(`cannot read the issue keys: ${e.message}`);
+      return 2;
+    }
+  }
+  if (usableLinear(board) && issueKeys === null) {
+    stoodDown.push(['issue-closed', `no --issue-keys, so no ${board.teamKey}-<M> key is checked against issue state`]);
   }
   stoodDown.push(['manifest-contract-first', 'the shell path supplies no phase contract; reach it through validate()']);
   for (const [rule, why] of stoodDown) console.error(`stood-down: ${rule} — ${why}`);
@@ -745,7 +758,11 @@ function main(argv) {
     existingPaths,
     openIssues: opts.openIssues,
     board,
+    issueKeys,
   });
+  // A key that could not be verified passes, so it is reported the way a rule
+  // that stood down is: named, and never read as checked.
+  for (const u of result.unverified) console.error(`stood-down: ${u.rule} — ${u.message}`);
   for (const v of result.violations) console.error(`${v.rule}: ${v.section} — ${v.message}`);
   console.log(result.ok ? 'clean' : `${result.violations.length} violation(s)`);
   return result.ok ? 0 : 1;

@@ -10,8 +10,9 @@ On the Linear board variant (repo-standards §6.5.1), an issue is created in
 GitHub and managed in Linear. The GitHub Issues Sync lands it on the board in
 about two minutes with **no project and no priority**, and an undressed issue is
 the variant failing. This skill is the step that dresses it, so the board stays
-right without anyone carrying a second number around. Under ADR 0014 prose names
-an issue `<short>-<N>` only, so tooling has to keep the Linear side correct.
+right without anyone carrying a second number around. Under ADR 0015 prose names
+an issue by its Linear key only, and that key exists once the sync has landed, so
+dressing is also the step that tells the session which key to write.
 
 Other skills call it — `/handoff` before its note, `standards-change` after a
 flush — and a reminder hook prompts it after a bare `gh issue create`. It takes
@@ -85,13 +86,19 @@ never retried blind. Report what the read-back shows, not what was sent.
 
 ## 5. Report
 
-One line per issue, in the repo's own identifier form:
+One line per issue, naming it by its Linear key (`linearKey` from the helper).
+An issue whose linkback has not landed has no key yet, so it is named by its
+`attachmentUrl` followed by `(pending Linear sync)` — never by its GitHub number
+and never by a placeholder:
 
 ```
-<short>-<N> → project <name>, priority <level> (read back)
-<short>-<N> → no Linear linkback yet — left on the 24h backstop
-<short>-<N> → project set; priority needs a human (no template read, no answer)
+<teamKey>-<M> → project <name>, priority <level> (read back)
+<teamKey>-<M> → project set; priority needs a human (no template read, no answer)
+https://github.com/<owner/repo>/issues/<N> (pending Linear sync) → no Linear linkback yet — left on the 24h backstop
 ```
+
+A session that files issues dresses them all at once and waits for these lines
+before writing prose that cites them: the key in each line is the name to use.
 
 Then stop. Dressing changes the board, and nothing else.
 
@@ -100,5 +107,5 @@ Then stop. Dressing changes the board, and nothing else.
 - Run anything Linear-shaped on a repo that is not on the Linear variant.
 - Invent a priority, a milestone or a blocking relation.
 - Overwrite a project or priority somebody already set.
-- Write a Linear key into prose. Under ADR 0014 the key is a handle for tools,
-  and the issue is named `<short>-<N>`.
+- Write the GitHub number beside the Linear key. Under ADR 0015 an issue on this
+  variant has one name in prose, and it is the key.
